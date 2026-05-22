@@ -1,4 +1,5 @@
 import base64
+import io
 import logging
 import os
 from collections import defaultdict, deque
@@ -224,9 +225,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     try:
         tg_file = await context.bot.get_file(photo.file_id)
-        buf = bytearray()
+        buf = io.BytesIO()
         await tg_file.download_to_memory(buf)
-        b64 = base64.b64encode(bytes(buf)).decode("ascii")
+        b64 = base64.b64encode(buf.getvalue()).decode("ascii")
         data_url = f"data:image/jpeg;base64,{b64}"
     except Exception as e:
         logger.exception("Failed to download photo")
