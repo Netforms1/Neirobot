@@ -1,4 +1,6 @@
+import asyncio
 import base64
+import contextlib
 import io
 import logging
 import os
@@ -127,6 +129,25 @@ def _current_prompt(chat_id: int) -> str:
     return MODES[mode]["prompt"] or BASE_PROMPT
 
 
+@contextlib.asynccontextmanager
+async def _keep_action(context: ContextTypes.DEFAULT_TYPE, chat_id: int, action: ChatAction):
+    async def _loop():
+        try:
+            while True:
+                await context.bot.send_chat_action(chat_id=chat_id, action=action)
+                await asyncio.sleep(4)
+        except asyncio.CancelledError:
+            pass
+
+    task = asyncio.create_task(_loop())
+    try:
+        yield
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+
 async def _send_markdown(update: Update, text: str, reply_markup=None) -> None:
     formatted = md_to_html(text)
     chunks = list(_split_for_telegram(formatted))
@@ -183,14 +204,14 @@ async def show_help(update: Update) -> None:
 
 async def _generate_image(update: Update, context: ContextTypes.DEFAULT_TYPE, prompt: str) -> None:
     chat_id = update.effective_chat.id
-    await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_PHOTO)
     try:
-        response = await client.images.generate(
-            model=IMAGE_MODEL,
-            prompt=prompt,
-            size=IMAGE_SIZE,
-            n=1,
-        )
+        async with _keep_action(context, chat_id, ChatAction.UPLOAD_PHOTO):
+            response = await client.images.generate(
+                model=IMAGE_MODEL,
+                prompt=prompt,
+                size=IMAGE_SIZE,
+                n=1,
+            )
         image_url = response.data[0].url
         revised = getattr(response.data[0], "revised_prompt", None)
         caption = f"🎨 _{prompt}_" if not revised else f"🎨 _{revised[:900]}_"
@@ -221,47 +242,46 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     caption = (update.message.caption or "").strip()
     question = caption or "Опиши подробно, что изображено на этой фотографии."
 
-    await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+    async with _keep_action(context, chat_id, ChatAction.TYPING):
+        try:
+            tg_file = await context.bot.get_file(photo.file_id)
+            buf = io.BytesIO()
+            await tg_file.download_to_memory(buf)
+            b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+            data_url = f"data:image/jpeg;base64,{b64}"
+        except Exception as e:
+            logger.exception("Failed to download photo")
+            await update.message.reply_text(
+                f"Не удалось загрузить фото: {e}", reply_markup=MAIN_KEYBOARD
+            )
+            return
 
-    try:
-        tg_file = await context.bot.get_file(photo.file_id)
-        buf = io.BytesIO()
-        await tg_file.download_to_memory(buf)
-        b64 = base64.b64encode(buf.getvalue()).decode("ascii")
-        data_url = f"data:image/jpeg;base64,{b64}"
-    except Exception as e:
-        logger.exception("Failed to download photo")
-        await update.message.reply_text(
-            f"Не удалось загрузить фото: {e}", reply_markup=MAIN_KEYBOARD
-        )
-        return
+        history = histories[chat_id]
+        user_message = {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": question},
+                {"type": "image_url", "image_url": {"url": data_url}},
+            ],
+        }
 
-    history = histories[chat_id]
-    user_message = {
-        "role": "user",
-        "content": [
-            {"type": "text", "text": question},
-            {"type": "image_url", "image_url": {"url": data_url}},
-        ],
-    }
+        messages = [
+            {"role": "system", "content": _current_prompt(chat_id)},
+            *history,
+            user_message,
+        ]
 
-    messages = [
-        {"role": "system", "content": _current_prompt(chat_id)},
-        *history,
-        user_message,
-    ]
-
-    try:
-        response = await client.chat.completions.create(
-            model=VISION_MODEL, messages=messages
-        )
-        reply = response.choices[0].message.content.strip()
-    except Exception as e:
-        logger.exception("Vision request failed")
-        await update.message.reply_text(
-            f"Ошибка при анализе фото: {e}", reply_markup=MAIN_KEYBOARD
-        )
-        return
+        try:
+            response = await client.chat.completions.create(
+                model=VISION_MODEL, messages=messages
+            )
+            reply = response.choices[0].message.content.strip()
+        except Exception as e:
+            logger.exception("Vision request failed")
+            await update.message.reply_text(
+                f"Ошибка при анализе фото: {e}", reply_markup=MAIN_KEYBOARD
+            )
+            return
 
     history.append({"role": "user", "content": f"[фото] {question}"})
     history.append({"role": "assistant", "content": reply})
@@ -294,24 +314,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await _generate_image(update, context, text)
         return
 
-    await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
-
     history = histories[chat_id]
     history.append({"role": "user", "content": text})
     messages = [{"role": "system", "content": _current_prompt(chat_id)}, *history]
 
-    try:
-        response = await client.chat.completions.create(
-            model=OPENAI_MODEL, messages=messages
-        )
-        reply = response.choices[0].message.content.strip()
-    except Exception as e:
-        logger.exception("OpenAI request failed")
-        history.pop()
-        await update.message.reply_text(
-            f"Ошибка при обращении к нейросети: {e}", reply_markup=MAIN_KEYBOARD
-        )
-        return
+    async with _keep_action(context, chat_id, ChatAction.TYPING):
+        try:
+            response = await client.chat.completions.create(
+                model=OPENAI_MODEL, messages=messages
+            )
+            reply = response.choices[0].message.content.strip()
+        except Exception as e:
+            logger.exception("OpenAI request failed")
+            history.pop()
+            await update.message.reply_text(
+                f"Ошибка при обращении к нейросети: {e}",
+                reply_markup=MAIN_KEYBOARD,
+            )
+            return
 
     history.append({"role": "assistant", "content": reply})
     await _send_markdown(update, reply, reply_markup=MAIN_KEYBOARD)
