@@ -3,7 +3,6 @@ import os
 from collections import defaultdict, deque
 from typing import Deque, Dict
 
-import telegramify_markdown
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 from telegram import KeyboardButton, ReplyKeyboardMarkup, Update
@@ -15,6 +14,8 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
+
+from md_html import md_to_html
 
 load_dotenv()
 
@@ -124,16 +125,18 @@ def _current_prompt(chat_id: int) -> str:
 
 
 async def _send_markdown(update: Update, text: str, reply_markup=None) -> None:
-    formatted = telegramify_markdown.markdownify(text)
-    for chunk in _split_for_telegram(formatted):
+    formatted = md_to_html(text)
+    chunks = list(_split_for_telegram(formatted))
+    for i, chunk in enumerate(chunks):
+        markup = reply_markup if i == len(chunks) - 1 else None
         try:
             await update.message.reply_text(
-                chunk,
-                parse_mode=ParseMode.MARKDOWN_V2,
-                reply_markup=reply_markup,
+                chunk, parse_mode=ParseMode.HTML, reply_markup=markup
             )
         except Exception:
-            await update.message.reply_text(chunk, reply_markup=reply_markup)
+            logger.exception("HTML parse failed; sending as plain text")
+            await update.message.reply_text(text, reply_markup=markup)
+            return
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -193,8 +196,8 @@ async def _generate_image(update: Update, context: ContextTypes.DEFAULT_TYPE, pr
     try:
         await update.message.reply_photo(
             photo=image_url,
-            caption=telegramify_markdown.markdownify(caption),
-            parse_mode=ParseMode.MARKDOWN_V2,
+            caption=md_to_html(caption),
+            parse_mode=ParseMode.HTML,
             reply_markup=MAIN_KEYBOARD,
         )
     except Exception:
