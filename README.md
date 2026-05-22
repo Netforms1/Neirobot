@@ -29,7 +29,7 @@ cp .env.example .env
 
 - `TELEGRAM_TOKEN` — токен бота от [@BotFather](https://t.me/BotFather)
 - `OPENROUTER_API_KEY` — ключ от [openrouter.ai/keys](https://openrouter.ai/keys)
-- `OPENROUTER_MODEL` *(опционально)* — модель, по умолчанию `meta-llama/llama-3.3-70b-instruct:free`. Список моделей: [openrouter.ai/models](https://openrouter.ai/models) (модели с `:free` бесплатные)
+- `OPENROUTER_MODEL` *(опционально)* — модель, по умолчанию `openai/gpt-oss-120b`. Список моделей: [openrouter.ai/models](https://openrouter.ai/models) (модели с `:free` бесплатные)
 - `MAX_HISTORY` *(опционально)* — сколько пар сообщений хранить в контексте, по умолчанию `20`
 
 ## Запуск
