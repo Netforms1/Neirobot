@@ -1,3 +1,4 @@
+import base64
 import logging
 import os
 from collections import defaultdict, deque
@@ -22,6 +23,7 @@ load_dotenv()
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+VISION_MODEL = os.getenv("VISION_MODEL", "gpt-4o-mini")
 IMAGE_MODEL = os.getenv("IMAGE_MODEL", "dall-e-3")
 IMAGE_SIZE = os.getenv("IMAGE_SIZE", "1024x1024")
 MAX_HISTORY = int(os.getenv("MAX_HISTORY", "20"))
@@ -147,7 +149,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         update,
         "Привет! Я **Нейробот** — твой ИИ-помощник 🤖\n\n"
         "Выбери режим на клавиатуре снизу и просто напиши свой запрос.\n\n"
-        "Доступна также *генерация фото* по описанию 🎨",
+        "Можно также:\n"
+        "- 🎨 *генерировать фото* по описанию\n"
+        "- 👁 *присылать фото* — разберу, что на нём (можно с подписью-вопросом)",
         reply_markup=MAIN_KEYBOARD,
     )
 
@@ -167,7 +171,11 @@ async def show_help(update: Update) -> None:
         "- 🧮 **Математика** — пошаговое решение\n"
         "- 📚 **Объяснение** — простыми словами\n"
         "- ❓ **Свободный вопрос** — обо всём\n"
-        "- 🎨 **Генерация фото** — изображение по описанию",
+        "- 🎨 **Генерация фото** — изображение по описанию\n\n"
+        "## Распознавание фото 👁\n\n"
+        "Просто пришли мне фотографию — опишу, что на ней. Можно добавить "
+        "подпись с вопросом, например *«Что это за растение?»* или "
+        "*«Переведи текст с фото»*.",
         reply_markup=MAIN_KEYBOARD,
     )
 
@@ -204,6 +212,60 @@ async def _generate_image(update: Update, context: ContextTypes.DEFAULT_TYPE, pr
         await update.message.reply_photo(
             photo=image_url, reply_markup=MAIN_KEYBOARD
         )
+
+
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.effective_chat.id
+    photo = update.message.photo[-1]
+    caption = (update.message.caption or "").strip()
+    question = caption or "Опиши подробно, что изображено на этой фотографии."
+
+    await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+
+    try:
+        tg_file = await context.bot.get_file(photo.file_id)
+        buf = bytearray()
+        await tg_file.download_to_memory(buf)
+        b64 = base64.b64encode(bytes(buf)).decode("ascii")
+        data_url = f"data:image/jpeg;base64,{b64}"
+    except Exception as e:
+        logger.exception("Failed to download photo")
+        await update.message.reply_text(
+            f"Не удалось загрузить фото: {e}", reply_markup=MAIN_KEYBOARD
+        )
+        return
+
+    history = histories[chat_id]
+    user_message = {
+        "role": "user",
+        "content": [
+            {"type": "text", "text": question},
+            {"type": "image_url", "image_url": {"url": data_url}},
+        ],
+    }
+
+    messages = [
+        {"role": "system", "content": _current_prompt(chat_id)},
+        *history,
+        user_message,
+    ]
+
+    try:
+        response = await client.chat.completions.create(
+            model=VISION_MODEL, messages=messages
+        )
+        reply = response.choices[0].message.content.strip()
+    except Exception as e:
+        logger.exception("Vision request failed")
+        await update.message.reply_text(
+            f"Ошибка при анализе фото: {e}", reply_markup=MAIN_KEYBOARD
+        )
+        return
+
+    history.append({"role": "user", "content": f"[фото] {question}"})
+    history.append({"role": "assistant", "content": reply})
+
+    await _send_markdown(update, reply, reply_markup=MAIN_KEYBOARD)
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -269,9 +331,13 @@ def _split_for_telegram(text: str, limit: int = 4000):
 def main() -> None:
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT, handle_message))
     logger.info(
-        "Neirobot started: chat=%s, image=%s", OPENAI_MODEL, IMAGE_MODEL
+        "Neirobot started: chat=%s, vision=%s, image=%s",
+        OPENAI_MODEL,
+        VISION_MODEL,
+        IMAGE_MODEL,
     )
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
