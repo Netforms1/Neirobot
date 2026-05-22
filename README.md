@@ -1,6 +1,6 @@
 # Neirobot
 
-Telegram-бот через [OpenRouter](https://openrouter.ai/) — универсальный ИИ-помощник, отвечающий на любые вопросы и помогающий с любыми задачами (код, тексты, переводы, идеи, расчёты и т.д.). OpenRouter даёт доступ к десяткам моделей, в том числе **бесплатным** (Llama 3.3, DeepSeek, Gemini Flash и др.).
+Telegram-бот на базе OpenAI GPT — универсальный ИИ-помощник, отвечающий на любые вопросы и помогающий с любыми задачами (код, тексты, переводы, идеи, расчёты и т.д.).
 
 ## Возможности
 
@@ -28,8 +28,8 @@ cp .env.example .env
 В файле `.env` укажите:
 
 - `TELEGRAM_TOKEN` — токен бота от [@BotFather](https://t.me/BotFather)
-- `OPENROUTER_API_KEY` — ключ от [openrouter.ai/keys](https://openrouter.ai/keys)
-- `OPENROUTER_MODEL` *(опционально)* — модель, по умолчанию `openai/gpt-oss-120b`. Список моделей: [openrouter.ai/models](https://openrouter.ai/models) (модели с `:free` бесплатные)
+- `OPENAI_API_KEY` — ключ от [platform.openai.com](https://platform.openai.com/api-keys)
+- `OPENAI_MODEL` *(опционально)* — модель, по умолчанию `gpt-4o-mini`
 - `MAX_HISTORY` *(опционально)* — сколько пар сообщений хранить в контексте, по умолчанию `20`
 
 ## Запуск

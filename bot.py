@@ -18,8 +18,8 @@ from telegram.ext import (
 load_dotenv()
 
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
-OPENROUTER_API_KEY = os.environ["OPENROUTER_API_KEY"]
-OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openai/gpt-oss-120b")
+OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 MAX_HISTORY = int(os.getenv("MAX_HISTORY", "20"))
 
 BASE_PROMPT = (
@@ -89,10 +89,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("neirobot")
 
-client = AsyncOpenAI(
-    api_key=OPENROUTER_API_KEY,
-    base_url="https://openrouter.ai/api/v1",
-)
+client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
 histories: Dict[int, Deque[dict]] = defaultdict(lambda: deque(maxlen=MAX_HISTORY * 2))
 user_mode: Dict[int, str] = {}
@@ -170,7 +167,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     try:
         response = await client.chat.completions.create(
-            model=OPENROUTER_MODEL, messages=messages
+            model=OPENAI_MODEL, messages=messages
         )
         reply = response.choices[0].message.content.strip()
     except Exception as e:
@@ -206,7 +203,7 @@ def main() -> None:
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT, handle_message))
-    logger.info("Neirobot started with model=%s", OPENROUTER_MODEL)
+    logger.info("Neirobot started with model=%s", OPENAI_MODEL)
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
